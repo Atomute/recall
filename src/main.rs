@@ -69,7 +69,7 @@ fn counts_from_entries(entries: &[HistoryEntry], filter: Option<&str>) -> HashMa
         if let Some(f) = filter {
             let f = f.trim().to_lowercase();
             let cmd_lower = entry.command.to_lowercase();
-            if !(cmd_lower.starts_with(&f) || cmd_lower.contains(&f)) {
+            if !(cmd_lower.starts_with(&f)) {
                 continue;
             }
         }
@@ -77,9 +77,6 @@ fn counts_from_entries(entries: &[HistoryEntry], filter: Option<&str>) -> HashMa
     }
     counts
 }
-
-
-
 
 fn parse_history_entries(path: &str, cmd_filter: Option<&str>, re: &Regex) -> io::Result<Vec<HistoryEntry>> {
     let file = File::open(path)?;
@@ -96,7 +93,7 @@ fn parse_history_entries(path: &str, cmd_filter: Option<&str>, re: &Regex) -> io
             if let Some(filter) = cmd_filter {
                 let filter = filter.trim().to_lowercase();
                 let cmd_lower = cmd.to_lowercase();
-                if !(cmd_lower.starts_with(&filter) || cmd_lower.contains(&filter)) {
+                if !(cmd_lower.starts_with(&filter)) {
                     continue;
                 }
             }
