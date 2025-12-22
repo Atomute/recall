@@ -1,0 +1,11 @@
+[package]
+name = "recall"
+version = "0.1.1"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.42"
+clap = { version = "4.5.53", features = ["derive"] }
+colored = "3.0.0"
+regex = "1.12.2"
+skim = "0.20.5"
