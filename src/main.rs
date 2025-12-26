@@ -8,14 +8,18 @@ use colored::*;
 
 #[derive(Parser)]
 struct Cli {
+    /// Optional top-level filter; when provided, behaves like the removed `find` subcommand.
+    #[arg(help = "Filter commands (e.g., 'npx')", value_name = "QUERY")]
+    query: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 } 
 
 #[derive(Subcommand)]
 enum Commands {
-    Freq {cmd: Option<String>},
-    Find {cmd: String},
+    /// Show most frequent commands; optional filter
+    Freq { cmd: Option<String> },
 } 
 
 #[derive(Debug)]
@@ -40,15 +44,15 @@ fn main() -> io::Result<()> {
             let counts = counts_from_entries(&entries, cmd.as_deref());
             print_top_commands(counts);
         }
-        // No subcommand: default to "recent"
         None => {
-            let entries = parse_history_entries(&path, None, &re)?;
-            print_recent_commands(&entries);
-        }
-        Some(Commands::Find{cmd}) => {
-            // cmd is &String, pass as &str
-            let entries = parse_history_entries(&path, Some(cmd.as_str()), &re)?;
-            print_recent_commands(&entries);
+            // No subcommand: default to "recent" or apply top-level query filter
+            if let Some(q) = &cli.query {
+                let entries = parse_history_entries(&path, Some(q.as_str()), &re)?;
+                print_recent_commands(&entries);
+            } else {
+                let entries = parse_history_entries(&path, None, &re)?;
+                print_recent_commands(&entries);
+            }
         }
     }
 
