@@ -8,9 +8,9 @@ use colored::*;
 
 #[derive(Parser)]
 struct Cli {
-    /// Optional top-level filter; when provided, behaves like the removed `find` subcommand.
-    #[arg(help = "Filter commands (e.g., 'npx')", value_name = "QUERY")]
-    query: Option<String>,
+    /// Filter commands by keywords (OR logic - matches any keyword)
+    #[arg(help = "Filter commands (e.g., 'docker python')", value_name = "QUERY")]
+    query: Vec<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -46,12 +46,13 @@ fn main() -> io::Result<()> {
         }
         None => {
             // No subcommand: default to "recent" or apply top-level query filter
-            if let Some(q) = &cli.query {
-                let entries = parse_history_entries(&path, Some(q.as_str()), &re)?;
-                print_recent_commands(&entries);
+            if !cli.query.is_empty() {
+                let filters: Vec<&str> = cli.query.iter().map(|s| s.as_str()).collect();
+                let entries = parse_history_entries(&path, Some(&filters), &re)?;
+                print_recent_commands(&entries, Some(&filters));
             } else {
                 let entries = parse_history_entries(&path, None, &re)?;
-                print_recent_commands(&entries);
+                print_recent_commands(&entries, None);
             }
         }
     }
@@ -82,7 +83,7 @@ fn counts_from_entries(entries: &[HistoryEntry], filter: Option<&str>) -> HashMa
     counts
 }
 
-fn parse_history_entries(path: &str, cmd_filter: Option<&str>, re: &Regex) -> io::Result<Vec<HistoryEntry>> {
+fn parse_history_entries(path: &str, cmd_filters: Option<&[&str]>, re: &Regex) -> io::Result<Vec<HistoryEntry>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
@@ -94,10 +95,20 @@ fn parse_history_entries(path: &str, cmd_filter: Option<&str>, re: &Regex) -> io
         if let Some(caps) = re.captures(&line) {
             let cmd = caps[2].to_string();
             let ts: i64 = caps[1].parse().unwrap_or(0);
-            if let Some(filter) = cmd_filter {
-                let filter = filter.trim().to_lowercase();
-                let cmd_lower = cmd.to_lowercase();
-                if !cmd_lower.contains(&filter) || cmd_lower.contains("recall") {
+            let cmd_lower = cmd.to_lowercase();
+            
+            // Skip recall commands
+            if cmd_lower.contains("recall") {
+                continue;
+            }
+            
+            if let Some(filters) = cmd_filters {
+                // OR logic: match if any filter is found
+                let matches = filters.iter().any(|f| {
+                    let f = f.trim().to_lowercase();
+                    cmd_lower.contains(&f)
+                });
+                if !matches {
                     continue;
                 }
             }
@@ -124,21 +135,46 @@ fn print_top_commands(counts: HashMap<String, i32>) {
     }
 }
 
-fn print_recent_commands(entries: &Vec<HistoryEntry>) {
+fn highlight_keywords(text: &str, keywords: Option<&[&str]>) -> String {
+    match keywords {
+        None => text.to_string(),
+        Some(kws) => {
+            let mut result = text.to_string();
+            for kw in kws {
+                let kw_lower = kw.to_lowercase();
+                // Case-insensitive replacement with highlighting
+                let mut new_result = String::new();
+                let mut remaining = result.as_str();
+                while let Some(pos) = remaining.to_lowercase().find(&kw_lower) {
+                    new_result.push_str(&remaining[..pos]);
+                    let matched = &remaining[pos..pos + kw.len()];
+                    new_result.push_str(&matched.red().to_string());
+                    remaining = &remaining[pos + kw.len()..];
+                }
+                new_result.push_str(remaining);
+                result = new_result;
+            }
+            result
+        }
+    }
+}
+
+fn print_recent_commands(entries: &Vec<HistoryEntry>, keywords: Option<&[&str]>) {
     println!("\n{}", "--- RECENT COMMANDS ---".bold().yellow());
     let mut sorted: Vec<&HistoryEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.timestamp.unwrap_or(0));
     let start = if sorted.len() > 1000 { sorted.len() - 1000 } else { 0 };
 
     for entry in &sorted[start..] {
+        let highlighted_cmd = highlight_keywords(&entry.command, keywords);
         if let Some(ts) = entry.timestamp {
             if let Some(dt) = chrono::Local.timestamp_opt(ts, 0).single() {
-                println!("{} | {}", dt.format("%Y-%m-%d %H:%M:%S").to_string().blue(), entry.command);
+                println!("{} | {}", dt.format("%Y-%m-%d %H:%M:%S").to_string().blue(), highlighted_cmd);
             } else {
-                println!("{} | {}", "Invalid date".blue(), entry.command);
+                println!("{} | {}", "Invalid date".blue(), highlighted_cmd);
             }
         } else {
-            println!("{} | {}", "N/A".blue(), entry.command);
+            println!("{} | {}", "N/A".blue(), highlighted_cmd);
         }
     }
 }
