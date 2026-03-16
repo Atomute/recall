@@ -103,8 +103,8 @@ fn parse_history_entries(path: &str, cmd_filters: Option<&[&str]>, re: &Regex) -
             }
             
             if let Some(filters) = cmd_filters {
-                // OR logic: match if any filter is found
-                let matches = filters.iter().any(|f| {
+                // AND logic: match only if all filters are found
+                let matches = filters.iter().all(|f| {
                     let f = f.trim().to_lowercase();
                     cmd_lower.contains(&f)
                 });
@@ -163,9 +163,18 @@ fn print_recent_commands(entries: &Vec<HistoryEntry>, keywords: Option<&[&str]>)
     println!("\n{}", "--- RECENT COMMANDS ---".bold().yellow());
     let mut sorted: Vec<&HistoryEntry> = entries.iter().collect();
     sorted.sort_by_key(|e| e.timestamp.unwrap_or(0));
-    let start = if sorted.len() > 1000 { sorted.len() - 1000 } else { 0 };
+    
+    // Deduplicate: keep only the most recent occurrence of each command
+    let mut seen: HashMap<&str, &HistoryEntry> = HashMap::new();
+    for entry in &sorted {
+        seen.insert(&entry.command, entry);
+    }
+    let mut unique: Vec<&HistoryEntry> = seen.into_values().collect();
+    unique.sort_by_key(|e| e.timestamp.unwrap_or(0));
+    
+    let start = if unique.len() > 1000 { unique.len() - 1000 } else { 0 };
 
-    for entry in &sorted[start..] {
+    for entry in &unique[start..] {
         let highlighted_cmd = highlight_keywords(&entry.command, keywords);
         if let Some(ts) = entry.timestamp {
             if let Some(dt) = chrono::Local.timestamp_opt(ts, 0).single() {
