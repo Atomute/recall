@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io;
 use std::collections::HashMap; 
 use clap::{Parser, Subcommand};
 use chrono::TimeZone;
@@ -84,39 +84,71 @@ fn counts_from_entries(entries: &[HistoryEntry], filter: Option<&str>) -> HashMa
 }
 
 fn parse_history_entries(path: &str, cmd_filters: Option<&[&str]>, re: &Regex) -> io::Result<Vec<HistoryEntry>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+    let mut file = File::open(path)?;
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut file, &mut bytes)?;
+    // Lossy-decode rather than skip invalid-UTF-8 lines: the continuation
+    // lookahead below indexes by physical line position, so every line must
+    // keep its slot in `lines` even if its bytes don't decode cleanly.
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
     let mut entries = Vec::new();
-    for line in reader.lines() {
-        let line = match line {
-            Ok(s) => s,
-            Err(_) => continue,
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(caps) = re.captures(&lines[i]) else {
+            i += 1;
+            continue;
         };
-        if let Some(caps) = re.captures(&line) {
-            let cmd = caps[2].to_string();
-            let ts: i64 = caps[1].parse().unwrap_or(0);
-            let cmd_lower = cmd.to_lowercase();
-            
-            // Skip recall commands
-            if cmd_lower.contains("recall") {
+        let ts: i64 = caps[1].parse().unwrap_or(0);
+        let mut cmd = caps[2].to_string();
+
+        // zsh's history file escapes each embedded newline inside a
+        // multi-line command by appending its own trailing '\' marker, on
+        // top of whatever '\' the user actually typed for shell
+        // line-continuation. Keep consuming physical lines while the
+        // current tail ends in '\' AND the next physical line isn't itself
+        // a new history entry — that combination is the only reliable
+        // signal it's a continuation marker rather than a literal trailing
+        // backslash the user typed on the command's last line.
+        let mut j = i;
+        while cmd.ends_with('\\') {
+            match lines.get(j + 1) {
+                Some(next) if !re.is_match(next) => {
+                    cmd.pop(); // drop the file format's marker only
+                    cmd.push('\n');
+                    cmd.push_str(next);
+                    j += 1;
+                }
+                _ => break,
+            }
+        }
+        i = j + 1;
+
+        let cmd_lower = cmd.to_lowercase();
+
+        // Skip self-invocations of the recall tool. Only check the first
+        // line: a multi-line command may legitimately mention "recall" in
+        // an argument on a later line, and that shouldn't hide the whole
+        // reconstructed command.
+        if cmd_lower.lines().next().unwrap_or("").contains("recall") {
+            continue;
+        }
+
+        if let Some(filters) = cmd_filters {
+            // AND logic: match only if all filters are found anywhere in
+            // the (possibly multi-line) reconstructed command
+            let matches = filters.iter().all(|f| {
+                let f = f.trim().to_lowercase();
+                cmd_lower.contains(&f)
+            });
+            if !matches {
                 continue;
             }
-            
-            if let Some(filters) = cmd_filters {
-                // AND logic: match only if all filters are found
-                let matches = filters.iter().all(|f| {
-                    let f = f.trim().to_lowercase();
-                    cmd_lower.contains(&f)
-                });
-                if !matches {
-                    continue;
-                }
-            }
-            entries.push(HistoryEntry {
-                timestamp: Some(ts),
-                command: cmd,
-            });
         }
+        entries.push(HistoryEntry {
+            timestamp: Some(ts),
+            command: cmd,
+        });
     }
     Ok(entries)
 }
